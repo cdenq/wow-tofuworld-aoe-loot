@@ -431,6 +431,60 @@ namespace
         for (size_t i = 0; i < loot->items.size(); ++i)
             loot->items[i].itemIndex = static_cast<uint32>(i);
     }
+
+    // Tofu: the player's own entry for quest row questIndex on this
+    // loot, or nullptr if the player has no copy of it. Shared quest
+    // items (party loot flag) are tracked only in these entries.
+    QuestItem* FindPlayerQuestEntry(
+        Loot const& loot,
+        Player const* player,
+        size_t questIndex)
+    {
+        QuestItemMap const& questMap = loot.GetPlayerQuestItems();
+        auto itr = questMap.find(player->GetGUID());
+
+        if (itr == questMap.end() || !itr->second)
+            return nullptr;
+
+        for (QuestItem& entry : *itr->second)
+        {
+            if (entry.index == questIndex)
+                return &entry;
+        }
+
+        return nullptr;
+    }
+
+    // Tofu: how many of itemId the player can still take from this
+    // loot's quest rows.
+    uint32 CountUnlootedQuestCopies(
+        Loot const& loot,
+        Player const* player,
+        uint32 itemId)
+    {
+        uint32 count = 0;
+
+        for (size_t i = 0; i < loot.quest_items.size(); ++i)
+        {
+            LootItem const& questItem = loot.quest_items[i];
+
+            if (questItem.itemid != itemId)
+                continue;
+
+            QuestItem const* entry =
+                FindPlayerQuestEntry(loot, player, i);
+
+            if (!entry || entry->is_looted)
+                continue;
+
+            if (!questItem.freeforall && questItem.is_looted)
+                continue;
+
+            count += questItem.count;
+        }
+
+        return count;
+    }
 }
 
 void AOELootPlayer::OnPlayerLogin(Player* player)
@@ -627,16 +681,20 @@ bool AOELootServer::CanPacketReceive(WorldSession* session, WorldPacket const& p
             if (!player->HasQuestForItem(questItem.itemid))
                 continue;
 
-            // Special group/free-for-all quest items remain on their
-            // source corpse so we don't damage ownership information.
-            if (questItem.freeforall ||
-                questItem.is_blocked ||
+            // Quest items with loot rules, conditions, or a roll remain
+            // on their source corpse so we don't damage ownership
+            // information. Tofu: shared (free-for-all) quest items are
+            // taken, but only the player's own copy (see below).
+            if (questItem.is_blocked ||
                 questItem.follow_loot_rules ||
                 !questItem.conditions.empty() ||
                 questItem.rollWinnerGUID)
             {
                 continue;
             }
+
+            if (!questItem.freeforall && questItem.is_looted)
+                continue;
 
             // Quest rows are only filled for looters present at the kill.
             if (!questItem.AllowedForPlayer(
@@ -645,6 +703,14 @@ bool AOELootServer::CanPacketReceive(WorldSession* session, WorldPacket const& p
             {
                 continue;
             }
+
+            // Tofu: the player must still have an unlooted entry of
+            // their own for this row.
+            QuestItem const* ownEntry =
+                FindPlayerQuestEntry(*loot, player, i);
+
+            if (!ownEntry || ownEntry->is_looted)
+                continue;
 
             uint32 maxNeeded = 0;
 
@@ -692,12 +758,11 @@ bool AOELootServer::CanPacketReceive(WorldSession* session, WorldPacket const& p
                     ownedCount += pending.item.count;
             }
 
-            for (LootItem const& mainQuestItem :
-                 mainLoot->quest_items)
-            {
-                if (mainQuestItem.itemid == questItem.itemid)
-                    ownedCount += mainQuestItem.count;
-            }
+            // Tofu: count only the clicked corpse's copies the player
+            // can still take, so copies already looted or meant for
+            // someone else do not block this one.
+            ownedCount += CountUnlootedQuestCopies(
+                *mainLoot, player, questItem.itemid);
 
             if (ownedCount >= maxNeeded)
                 continue;
@@ -800,7 +865,14 @@ bool AOELootServer::CanPacketReceive(WorldSession* session, WorldPacket const& p
             sourceLoot->quest_items[
                 candidate.sourceIndex];
 
-        if (sourceItem.is_looted)
+        if (!sourceItem.freeforall && sourceItem.is_looted)
+            continue;
+
+        // Tofu: the player's own entry for this row.
+        QuestItem* ownEntry = FindPlayerQuestEntry(
+            *sourceLoot, player, candidate.sourceIndex);
+
+        if (!ownEntry || ownEntry->is_looted)
             continue;
 
         uint32 amountToAdd = std::min<uint32>(
@@ -815,12 +887,31 @@ bool AOELootServer::CanPacketReceive(WorldSession* session, WorldPacket const& p
             continue;
         }
 
-        if (amountToAdd >= sourceItem.count)
+        if (sourceItem.freeforall)
         {
-            sourceItem.is_looted = true;
+            // Tofu: a shared quest item has one copy per player. Mark
+            // only this player's copy as looted; the shared row and
+            // every other player's copy stay on the corpse. The core
+            // counted one unlooted item per player with a copy.
+            ownEntry->is_looted = true;
 
             if (sourceLoot->unlootedCount > 0)
                 --sourceLoot->unlootedCount;
+        }
+        else if (amountToAdd >= sourceItem.count)
+        {
+            sourceItem.is_looted = true;
+
+            // Tofu: also mark the player's own entry, which the loot
+            // window reads, so the item cannot be looted again.
+            ownEntry->is_looted = true;
+
+            if (sourceLoot->unlootedCount > 0)
+                --sourceLoot->unlootedCount;
+
+            // Remove it from the window of anyone viewing that corpse.
+            sourceLoot->NotifyQuestItemRemoved(
+                static_cast<uint8>(candidate.sourceIndex));
         }
         else
         {
