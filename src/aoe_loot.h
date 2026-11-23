@@ -36,6 +36,10 @@
 
  // Maximum loot items count
 constexpr size_t MAX_LOOT_ITEMS = 16;
+
+// Tofu: player setting that keeps each character's .aoeloot choice (index 0: 1 = off, 0 or no row = on). Read by mod-tofu-character-services.
+constexpr char AOE_LOOT_SETTING_SOURCE[] = "mod-aoe-loot";
+constexpr uint32 AOE_LOOT_SETTING_INDEX = 0;
 using namespace Acore::ChatCommands;
 
 enum AoeLootString

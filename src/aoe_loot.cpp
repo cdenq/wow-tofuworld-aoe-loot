@@ -492,6 +492,9 @@ void AOELootPlayer::OnPlayerLogin(Player* player)
     if (!player)
         return;
 
+    // Tofu: the on/off choice is kept in a player setting so it survives relogs and restarts (1 = off; no row = on).
+    AoeLootCommandScript::setPlayerAoeLootEnabled(player->GetGUID().GetRawValue(), player->GetPlayerSetting(AOE_LOOT_SETTING_SOURCE, AOE_LOOT_SETTING_INDEX).value == 0);
+
     if (sConfigMgr->GetOption<bool>("AOELoot.Enable", true) && sConfigMgr->GetOption<bool>("AOELoot.Message", true))
         if (WorldSession* session = player->GetSession())
             ChatHandler(session).PSendModuleSysMessage(MODULE_STRING, AOE_LOGIN_MESSAGE);
@@ -1116,6 +1119,7 @@ bool AoeLootCommandScript::HandleAoeLootOnCommand(ChatHandler* handler, Optional
     }
 
     AoeLootCommandScript::setPlayerAoeLootEnabled(playerGuid, true);
+    player->UpdatePlayerSetting(AOE_LOOT_SETTING_SOURCE, AOE_LOOT_SETTING_INDEX, 0);
     handler->PSendModuleSysMessage(MODULE_STRING, AOE_LOOT_ENABLED);
     return true;
 }
@@ -1136,6 +1140,7 @@ bool AoeLootCommandScript::HandleAoeLootOffCommand(ChatHandler* handler, Optiona
     }
 
     AoeLootCommandScript::setPlayerAoeLootEnabled(playerGuid, false);
+    player->UpdatePlayerSetting(AOE_LOOT_SETTING_SOURCE, AOE_LOOT_SETTING_INDEX, 1);
     handler->PSendModuleSysMessage(MODULE_STRING, AOE_LOOT_DISABLED);
     return true;
 }
