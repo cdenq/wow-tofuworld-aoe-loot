@@ -746,6 +746,53 @@ bool AOELootServer::CanPacketReceive(WorldSession* session, WorldPacket const& p
                             quest->RequiredItemCount[j];
                     }
                 }
+
+                // Tofu: source items (quest_template ItemDrop) are
+                // collected for the quest but not turned in, for
+                // example Demonic Rune Stone 28513 for quests 10144
+                // and 10208. Same amount rule as the core's
+                // Player::HasQuestForItem: ItemDropQuantity when set,
+                // else the item's MaxCount, else its stack size, and
+                // never above MaxCount. Only incomplete quests count.
+                if (player->GetQuestStatus(questId) !=
+                    QUEST_STATUS_INCOMPLETE)
+                {
+                    continue;
+                }
+
+                for (uint8 j = 0;
+                     j < QUEST_SOURCE_ITEM_IDS_COUNT;
+                     ++j)
+                {
+                    if (quest->ItemDrop[j] != questItem.itemid)
+                        continue;
+
+                    ItemTemplate const* proto =
+                        sObjectMgr->GetItemTemplate(questItem.itemid);
+
+                    if (!proto)
+                        continue;
+
+                    uint32 sourceNeeded = quest->ItemDropQuantity[j];
+
+                    if (!sourceNeeded)
+                    {
+                        sourceNeeded = proto->MaxCount > 0 ?
+                            static_cast<uint32>(proto->MaxCount) :
+                            proto->GetMaxStackSize();
+                    }
+
+                    if (proto->MaxCount > 0 &&
+                        sourceNeeded >
+                            static_cast<uint32>(proto->MaxCount))
+                    {
+                        sourceNeeded =
+                            static_cast<uint32>(proto->MaxCount);
+                    }
+
+                    if (sourceNeeded > maxNeeded)
+                        maxNeeded = sourceNeeded;
+                }
             }
 
             if (maxNeeded == 0)
